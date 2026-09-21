@@ -1,37 +1,34 @@
-AI-Experiment for testing!
-
-
 # Tuckbox Generator
 
-A standalone Tkinter desktop app that generates a physical tuckbox dieline for standard Magic: The Gathering cards.
+Tkinter desktop application for designing printable Magic: The Gathering tuckboxes.
 
-## Features
+## Included
 
-- MTG defaults: 63 × 88 mm cards
-- Automatic box width from card count and card thickness
-- Adjustable clearance, bleed, glue tab, and tuck flap
-- Real dieline layout: glue tab, back, side, front, side, top/bottom flaps, and dust flaps
-- Solid cut lines and blue dashed fold lines
-- SVG export in millimetres
-- A4 and US Letter PDF export at fitted scale
-- Live preview
+- Standard MTG card dimensions: 63 × 88 mm
+- Presets for 60, 75, 90, and 100 cards
+- Unsleeved, standard-sleeve, and thick-sleeve profiles
+- Automatic stack-width calculation from card count and thickness
+- Front/back artwork import with live drag-to-position preview
+- Configurable artwork scale and position state
+- Dieline with glue tab, front/back/side panels, tuck flap, dust flaps, cut and fold lines
+- Red trim/registration marks
+- SVG export with embedded artwork
+- A4 and US Letter PDF dieline export
 
-## Install and run
+## Install
 
 ```bash
 python -m venv .venv
-# macOS/Linux
-source .venv/bin/activate
-# Windows PowerShell: .venv\\Scripts\\Activate.ps1
+source .venv/bin/activate       # Windows: .venv\\Scripts\\activate
 pip install -r requirements.txt
 python app.py
 ```
 
-Always print with **Actual size / 100% scale**. Make one test cut before producing a batch; card stock, sleeves, and printer tolerances vary.
+Print exports at **Actual size / 100%**. Always make a test cut first: card stock, sleeve brands, and printer tolerances vary. Imported artwork can be dragged over the front or back panel in the preview; use Reset artwork positions to return it to center.
 
 ## Geometry
 
-The internal width is calculated as `card count × card thickness + 2 × clearance`. The standard MTG card face is 63 × 88 mm. The generated dieline includes a configurable glue tab and independent top/bottom closure flaps.
+The internal stack width is `cards × thickness + 2 × clearance`. The other internal dimensions are the 63 × 88 mm MTG card face plus clearance. Sleeve profiles provide practical starting values, but measure your own stack for production work.
 
 ## License
 

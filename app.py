@@ -1,6 +1,7 @@
-"""Printable tuckbox dieline generator for standard MTG-sized cards."""
+"""MTG tuckbox generator: editable dieline, artwork placement, presets and exports."""
 from __future__ import annotations
 
+import base64
 import os
 import tkinter as tk
 from dataclasses import dataclass
@@ -21,79 +22,109 @@ except ImportError:
     A4 = letter = mm = pdf_canvas = None
 
 
+PRESETS = {
+    "60 cards": 60, "75 cards": 75, "90 cards": 90, "100 cards": 100,
+}
+PROFILES = {
+    "Unsleeved": (0.30, 2.0),
+    "Standard sleeves": (0.65, 2.5),
+    "Thick sleeves": (0.85, 3.0),
+}
+
+
 @dataclass
-class BoxConfig:
+class Config:
     cards: int = 60
     card_w: float = 63.0
     card_h: float = 88.0
     thickness: float = 0.30
     clearance: float = 2.0
     bleed: float = 3.0
-    glue_tab: float = 12.0
-    tuck_depth: float = 25.0
+    glue: float = 12.0
+    tuck: float = 25.0
 
     @property
-    def inner_w(self): return self.cards * self.thickness + self.clearance * 2
+    def width(self): return self.cards * self.thickness + 2 * self.clearance
     @property
-    def inner_d(self): return self.card_w + self.clearance * 2
+    def depth(self): return self.card_w + 2 * self.clearance
     @property
-    def inner_h(self): return self.card_h + self.clearance * 2
+    def height(self): return self.card_h + 2 * self.clearance
     @property
-    def dieline_w(self): return self.glue_tab + self.inner_d * 2 + self.inner_w * 2
+    def bottom(self): return self.height * .72
     @property
-    def dieline_h(self): return self.tuck_depth + self.inner_h + self.inner_h * .72
+    def side_flap(self): return self.height * .34
+    @property
+    def total_w(self): return self.glue + self.depth + self.width + self.depth + self.width
+    @property
+    def total_h(self): return self.bottom + self.height + self.tuck
 
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("MTG Tuckbox Generator")
-        self.geometry("1250x820")
-        self.minsize(1000, 700)
-        self.cfg = BoxConfig()
+        self.geometry("1280x850")
+        self.minsize(1050, 720)
+        self.cfg = Config()
         self.front_path = self.back_path = None
+        self.art = {"front": [0.0, 0.0, 1.0], "back": [0.0, 0.0, 1.0]}
+        self.drag = None
+        self.scale = 1.0
+        self.origin = (0, 0)
         self._photos = []
-        self._make_ui()
-        self.redraw()
+        self.build_ui()
+        self.after(100, self.redraw)
 
-    def _make_ui(self):
+    def build_ui(self):
         root = ttk.Frame(self, padding=12); root.pack(fill="both", expand=True)
-        controls = ttk.Frame(root, width=285); controls.pack(side="left", fill="y", padx=(0, 12)); controls.pack_propagate(False)
-        preview = ttk.Frame(root); preview.pack(side="right", fill="both", expand=True)
-        ttk.Label(controls, text="Tuckbox settings", font=("Segoe UI", 13, "bold")).pack(anchor="w", pady=(0, 8))
+        controls = ttk.Frame(root, width=300); controls.pack(side="left", fill="y", padx=(0, 12)); controls.pack_propagate(False)
+        pane = ttk.Frame(root); pane.pack(side="right", fill="both", expand=True)
+        ttk.Label(controls, text="Tuckbox settings", font=("Segoe UI", 13, "bold")).pack(anchor="w")
+        self.preset = tk.StringVar(value="60 cards")
+        self.profile = tk.StringVar(value="Unsleeved")
+        for label, var, values in [("Deck preset", self.preset, list(PRESETS)), ("Sleeve profile", self.profile, list(PROFILES))]:
+            row = ttk.Frame(controls); row.pack(fill="x", pady=5)
+            ttk.Label(row, text=label, width=18).pack(side="left")
+            box = ttk.Combobox(row, textvariable=var, values=values, state="readonly", width=14); box.pack(side="right")
+            box.bind("<<ComboboxSelected>>", lambda _e: self.apply_preset())
         self.vars = {k: tk.StringVar(value=str(v)) for k, v in {
             "cards": 60, "card_w": 63, "card_h": 88, "thickness": .30,
-            "clearance": 2, "bleed": 3, "glue_tab": 12, "tuck_depth": 25}.items()}
-        labels = {"cards":"Cards", "card_w":"Card width (mm)", "card_h":"Card height (mm)", "thickness":"Card thickness (mm)", "clearance":"Clearance (mm)", "bleed":"Bleed (mm)", "glue_tab":"Glue tab (mm)", "tuck_depth":"Top tuck flap (mm)"}
+            "clearance": 2, "bleed": 3, "glue": 12, "tuck": 25}.items()}
+        labels = {"cards":"Cards", "card_w":"Card width (mm)", "card_h":"Card height (mm)", "thickness":"Stack thickness/card (mm)", "clearance":"Clearance (mm)", "bleed":"Bleed (mm)", "glue":"Glue tab (mm)", "tuck":"Top tuck depth (mm)"}
         for key, var in self.vars.items():
-            row = ttk.Frame(controls); row.pack(fill="x", pady=3)
+            row = ttk.Frame(controls); row.pack(fill="x", pady=2)
             ttk.Label(row, text=labels[key], width=20).pack(side="left")
-            ttk.Entry(row, textvariable=var, width=9).pack(side="right")
-        ttk.Button(controls, text="Apply and redraw", command=self.apply).pack(fill="x", pady=(8, 12))
-        ttk.Separator(controls).pack(fill="x", pady=4)
-        ttk.Label(controls, text="Artwork", font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=8)
-        ttk.Button(controls, text="Choose front artwork", command=lambda: self.choose("front")).pack(fill="x", pady=3)
-        ttk.Button(controls, text="Choose back artwork", command=lambda: self.choose("back")).pack(fill="x", pady=3)
-        self.art_label = ttk.Label(controls, text="No artwork selected", wraplength=260); self.art_label.pack(anchor="w", pady=5)
+            ttk.Entry(row, textvariable=var, width=10).pack(side="right")
+        ttk.Button(controls, text="Apply settings", command=self.apply).pack(fill="x", pady=(8, 10))
+        ttk.Separator(controls).pack(fill="x", pady=5)
+        ttk.Label(controls, text="Artwork (drag in preview)", font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=7)
+        ttk.Button(controls, text="Choose front artwork", command=lambda: self.choose("front")).pack(fill="x", pady=2)
+        ttk.Button(controls, text="Choose back artwork", command=lambda: self.choose("back")).pack(fill="x", pady=2)
+        self.art_label = ttk.Label(controls, text="No artwork selected", wraplength=280); self.art_label.pack(anchor="w", pady=5)
+        ttk.Button(controls, text="Reset artwork positions", command=self.reset_art).pack(fill="x", pady=2)
         ttk.Separator(controls).pack(fill="x", pady=8)
-        ttk.Label(controls, text="Export", font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=5)
-        ttk.Button(controls, text="Export SVG dieline", command=self.export_svg).pack(fill="x", pady=3)
-        ttk.Button(controls, text="Export PDF (A4)", command=lambda: self.export_pdf(A4)).pack(fill="x", pady=3)
-        ttk.Button(controls, text="Export PDF (Letter)", command=lambda: self.export_pdf(letter)).pack(fill="x", pady=3)
-        self.info = ttk.Label(controls, text="", justify="left", wraplength=270); self.info.pack(anchor="w", pady=18)
-        ttk.Label(preview, text="Dieline preview — solid = cut, dashed = fold", font=("Segoe UI", 13, "bold")).pack(anchor="w", pady=(0, 8))
-        self.canvas = tk.Canvas(preview, background="#eef0f2", highlightthickness=1); self.canvas.pack(fill="both", expand=True)
+        ttk.Label(controls, text="Export", font=("Segoe UI", 11, "bold")).pack(anchor="w")
+        ttk.Button(controls, text="SVG with trim marks", command=self.export_svg).pack(fill="x", pady=2)
+        ttk.Button(controls, text="PDF (A4)", command=lambda: self.export_pdf(A4, "A4")).pack(fill="x", pady=2)
+        ttk.Button(controls, text="PDF (Letter)", command=lambda: self.export_pdf(letter, "Letter")).pack(fill="x", pady=2)
+        self.info = ttk.Label(controls, justify="left", wraplength=280); self.info.pack(anchor="w", pady=16)
+        ttk.Label(pane, text="Preview — black solid=cut, blue dashed=fold, red=trim/bleed", font=("Segoe UI", 13, "bold")).pack(anchor="w", pady=(0, 8))
+        self.canvas = tk.Canvas(pane, bg="#edf0f2", highlightthickness=1); self.canvas.pack(fill="both", expand=True)
+        self.canvas.bind("<Configure>", lambda _e: self.redraw())
+        self.canvas.bind("<ButtonPress-1>", self.start_drag); self.canvas.bind("<B1-Motion>", self.move_drag); self.canvas.bind("<ButtonRelease-1>", lambda _e: setattr(self, "drag", None))
+
+    def apply_preset(self):
+        self.vars["cards"].set(str(PRESETS[self.preset.get()]))
+        thickness, clearance = PROFILES[self.profile.get()]
+        self.vars["thickness"].set(str(thickness)); self.vars["clearance"].set(str(clearance)); self.apply()
 
     def apply(self):
         try:
-            values = {k: float(v.get()) for k, v in self.vars.items()}
-            values["cards"] = int(values["cards"])
-            if values["cards"] < 1 or any(values[k] <= 0 for k in ("card_w", "card_h", "thickness", "clearance", "glue_tab", "tuck_depth")) or values["bleed"] < 0:
-                raise ValueError
-            self.cfg = BoxConfig(**values)
+            d = {k: float(v.get()) for k, v in self.vars.items()}; d["cards"] = int(d["cards"])
+            if d["cards"] < 1 or any(d[k] <= 0 for k in ("card_w", "card_h", "thickness", "clearance", "glue", "tuck")) or d["bleed"] < 0: raise ValueError
+            self.cfg = Config(**d); self.redraw()
         except (ValueError, TypeError):
-            messagebox.showerror("Invalid settings", "Enter positive numeric dimensions and at least one card."); return
-        self.redraw()
+            messagebox.showerror("Invalid settings", "Use positive dimensions and at least one card.")
 
     def choose(self, side):
         path = filedialog.askopenfilename(filetypes=[("Images", "*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff")])
@@ -102,66 +133,91 @@ class App(tk.Tk):
             self.art_label.config(text=f"Front: {os.path.basename(self.front_path) if self.front_path else 'none'}\nBack: {os.path.basename(self.back_path) if self.back_path else 'none'}")
             self.redraw()
 
-    def geometry(self):
-        c = self.cfg; x = c.glue_tab; y = c.tuck_depth
-        # panel order: glue, back, side, front, side; each tuple x,y,w,h
-        panels = [(0, y, c.glue_tab, c.inner_h), (x, y, c.inner_d, c.inner_h), (x+c.inner_d, y, c.inner_w, c.inner_h), (x+c.inner_d+c.inner_w, y, c.inner_d, c.inner_h), (x+c.inner_d*2+c.inner_w, y, c.inner_w, c.inner_h)]
-        return panels
+    def reset_art(self): self.art = {"front": [0, 0, 1], "back": [0, 0, 1]}; self.redraw()
+
+    def panels(self):
+        c = self.cfg; x = c.glue; y = c.bottom
+        return [(x, y, c.depth, c.height, "back"), (x+c.depth, y, c.width, c.height, "side"), (x+c.depth+c.width, y, c.depth, c.height, "front"), (x+c.depth*2+c.width, y, c.width, c.height, "side")]
+
+    def flaps(self):
+        c = self.cfg; x = c.glue; y = c.bottom
+        return [(x, y-c.bottom, c.depth, c.bottom), (x+c.depth+c.width, y-c.bottom, c.depth, c.bottom), (x+c.depth, y-c.side_flap, c.width, c.side_flap), (x+c.depth*2+c.width, y-c.side_flap, c.width, c.side_flap), (x, y+c.height, c.depth, c.tuck), (x+c.depth+c.width, y+c.height, c.depth, c.side_flap), (x+c.depth, y+c.height, c.width, c.side_flap), (x+c.depth*2+c.width, y+c.height, c.width, c.side_flap)]
 
     def redraw(self):
+        if not hasattr(self, "canvas"): return
         self.canvas.delete("all"); self._photos.clear(); c = self.cfg
-        scale = min((self.canvas.winfo_width()-30)/max(c.dieline_w, 1), (self.canvas.winfo_height()-30)/max(c.dieline_h, 1), 5.2)
-        scale = max(scale, 1.4); ox, oy = 15, 15
-        def p(x, y): return ox+x*scale, oy+(c.dieline_h-y)*scale
-        def rect(x,y,w,h, fill="white", outline="#222", dash=()):
-            x1,y1=p(x,y); x2,y2=p(x+w,y+h); self.canvas.create_rectangle(x1,y2,x2,y1, fill=fill, outline=outline, width=2, dash=dash)
-        # body panels
-        panels = self.geometry()
-        for i,(x,y,w,h) in enumerate(panels): rect(x,y,w,h, "#fff" if i in (1,3) else "#f3f5f7")
-        # bottom flaps: full flaps on front/back, dust flaps on sides
-        for x,y,w,h in [(c.glue_tab,y-c.inner_h*.72,c.inner_d,c.inner_h*.72), (c.glue_tab+c.inner_d+c.inner_w,y-c.inner_h*.72,c.inner_d,c.inner_h*.72), (c.glue_tab+c.inner_d,y-c.inner_h*.52,c.inner_w,c.inner_h*.52), (c.glue_tab+c.inner_d*2+c.inner_w,y-c.inner_h*.52,c.inner_w,c.inner_h*.52)]: rect(x,y,w,h,"#f8f8f8")
-        # top flaps: back locking tuck, front dust flap, side dust flaps
-        for x,y,w,h in [(c.glue_tab,y+c.inner_h,c.inner_d,c.tuck_depth), (c.glue_tab+c.inner_d+c.inner_w,y+c.inner_h,c.inner_d,c.inner_h*.52), (c.glue_tab+c.inner_d,y+c.inner_h,c.inner_w,c.inner_h*.34), (c.glue_tab+c.inner_d*2+c.inner_w,y+c.inner_h,c.inner_w,c.inner_h*.34)]: rect(x,y,w,h,"#f8f8f8")
-        # labels and fold lines
-        for i,(x,y,w,h) in enumerate(panels):
-            if i == 0: continue
-            tx,ty=p(x+w/2,y+h/2); self.canvas.create_text(tx,ty,text={1:"BACK",2:"SIDE",3:"FRONT",4:"SIDE"}[i], fill="#555", font=("Segoe UI", 10, "bold"))
-        for x in [c.glue_tab, c.glue_tab+c.inner_d, c.glue_tab+c.inner_d+c.inner_w, c.glue_tab+c.inner_d*2+c.inner_w, c.glue_tab+c.inner_d*2+c.inner_w*2]:
-            x1,y1=p(x,0); x2,y2=p(x,c.dieline_h); self.canvas.create_line(x1,y1,x2,y2, fill="#5577aa", dash=(5,4))
-        for y in [c.tuck_depth, c.tuck_depth+c.inner_h]:
-            x1,y1=p(0,y); x2,y2=p(c.dieline_w,y); self.canvas.create_line(x1,y1,x2,y2, fill="#5577aa", dash=(5,4))
-        self.info.config(text=f"Internal: {c.inner_w:.2f} W × {c.inner_d:.2f} D × {c.inner_h:.2f} H mm\nDieline: {c.dieline_w:.2f} × {c.dieline_h:.2f} mm\nBleed: {c.bleed:.2f} mm\nPrint at 100%; verify with a test cut.")
+        usable_w, usable_h = max(self.canvas.winfo_width()-40, 100), max(self.canvas.winfo_height()-40, 100)
+        self.scale = min(usable_w/(c.total_w+2*c.bleed), usable_h/(c.total_h+2*c.bleed)); self.origin = (20+c.bleed*self.scale, 20+c.bleed*self.scale)
+        def xy(x, y): return self.origin[0]+x*self.scale, self.origin[1]+(c.total_h-y)*self.scale
+        def box(x,y,w,h, fill="#fff", outline="#222", dash=()):
+            a,b=xy(x,y); d,e=xy(x+w,y+h); self.canvas.create_rectangle(a,e,d,b,fill=fill,outline=outline,width=2,dash=dash)
+        for x,y,w,h,_ in self.panels(): box(x,y,w,h, "#fff" if _ in ("front","back") else "#f5f6f7")
+        for x,y,w,h in self.flaps(): box(x,y,w,h,"#f8f8f8")
+        # fold lines only at actual seams
+        for x in [c.glue, c.glue+c.depth, c.glue+c.depth+c.width, c.glue+c.depth*2+c.width]:
+            a,b=xy(x,0); d,e=xy(x,c.total_h); self.canvas.create_line(a,b,d,e,fill="#2865ad",dash=(7,5))
+        for y in [c.bottom, c.bottom+c.height]:
+            a,b=xy(0,y); d,e=xy(c.total_w,y); self.canvas.create_line(a,b,d,e,fill="#2865ad",dash=(7,5))
+        for x,y,w,h,label in self.panels():
+            a,b=xy(x+w/2,y+h/2); self.canvas.create_text(a,b,text=label.upper(),fill="#555",font=("Segoe UI",10,"bold"))
+        self.draw_art("front", self.front_path, c.glue+c.depth+c.width, c.bottom, c.depth, c.height, xy)
+        self.draw_art("back", self.back_path, c.glue, c.bottom, c.depth, c.height, xy)
+        # trim marks around outer bleed bounds
+        for x,y in [(0,0),(c.total_w,0),(0,c.total_h),(c.total_w,c.total_h)]:
+            a,b=xy(x,y); self.canvas.create_oval(a-3,b-3,a+3,b+3,outline="#c33")
+        self.info.config(text=f"Internal: {c.width:.2f} W × {c.depth:.2f} D × {c.height:.2f} H mm\nDieline: {c.total_w:.2f} × {c.total_h:.2f} mm\nProfile: {self.profile.get()}\nPrint at 100%; test cut recommended.")
 
-    def _svg(self):
-        c=self.cfg; w,h=c.dieline_w+2*c.bleed,c.dieline_h+2*c.bleed; ox=oy=c.bleed
-        out=[f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}mm" height="{h}mm" viewBox="0 0 {w} {h}">', '<rect width="100%" height="100%" fill="white"/>']
-        def r(x,y,ww,hh,kind="cut"):
-            style='fill:#fff;stroke:#111;stroke-width:.25' if kind=='cut' else 'fill:none;stroke:#36c;stroke-width:.2;stroke-dasharray="2,1"'
-            out.append(f'<rect x="{x+ox}" y="{h-(y+oy+hh)}" width="{ww}" height="{hh}" style="{style}"/>')
-        for x,y,ww,hh in self.geometry(): r(x,y,ww,hh)
-        for x,y,ww,hh in [(c.glue_tab,y-c.inner_h*.72,c.inner_d,c.inner_h*.72),(c.glue_tab+c.inner_d+c.inner_w,y-c.inner_h*.72,c.inner_d,c.inner_h*.72),(c.glue_tab+c.inner_d,y-c.inner_h*.52,c.inner_w,c.inner_h*.52),(c.glue_tab+c.inner_d*2+c.inner_w,y-c.inner_h*.52,c.inner_w,c.inner_h*.52),(c.glue_tab,y+c.inner_h,c.inner_d,c.tuck_depth),(c.glue_tab+c.inner_d+c.inner_w,y+c.inner_h,c.inner_d,c.inner_h*.52),(c.glue_tab+c.inner_d,y+c.inner_h,c.inner_w,c.inner_h*.34),(c.glue_tab+c.inner_d*2+c.inner_w,y+c.inner_h,c.inner_w,c.inner_h*.34)]: r(x,y,ww,hh)
-        for x in [c.glue_tab,c.glue_tab+c.inner_d,c.glue_tab+c.inner_d+c.inner_w,c.glue_tab+c.inner_d*2+c.inner_w,c.glue_tab+c.inner_d*2+c.inner_w*2]: out.append(f'<path d="M{x+ox} {h-oy}V{h-(c.dieline_h+oy)}" style="fill:none;stroke:#36c;stroke-width:.2;stroke-dasharray:2,1"/>')
-        for y in [c.tuck_depth,c.tuck_depth+c.inner_h]: out.append(f'<path d="M{ox} {h-(y+oy)}H{w-ox}" style="fill:none;stroke:#36c;stroke-width:.2;stroke-dasharray:2,1"/>')
-        out.append('</svg>'); return '\n'.join(out)
+    def draw_art(self, side, path, x, y, w, h, xy):
+        if not path or Image is None: return
+        try:
+            img = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
+            zoom, ox, oy = self.art[side]; target=(max(20,int(w*self.scale*zoom)),max(20,int(h*self.scale*zoom)))
+            img.thumbnail(target, Image.Resampling.LANCZOS); photo=ImageTk.PhotoImage(img); self._photos.append(photo)
+            a,b=xy(x+w/2+ox*w,y+h/2+oy*h); self.canvas.create_image(a,b,image=photo,anchor="center",tags=("art",side))
+        except Exception: pass
+
+    def start_drag(self, event):
+        for side,path,x,y,w,h in [("front",self.front_path,self.cfg.glue+self.cfg.depth+self.cfg.width,self.cfg.bottom,self.cfg.depth,self.cfg.height),("back",self.back_path,self.cfg.glue,self.cfg.bottom,self.cfg.depth,self.cfg.height)]:
+            if path:
+                cx=self.origin[0]+(x+w/2+self.art[side][0]*w)*self.scale; cy=self.origin[1]+(self.cfg.total_h-(y+h/2+self.art[side][1]*h))*self.scale
+                if abs(event.x-cx)<w*self.scale/2 and abs(event.y-cy)<h*self.scale/2: self.drag=(side,event.x,event.y); return
+    def move_drag(self,event):
+        if not self.drag:return
+        side,px,py=self.drag; self.art[side][0]+=(event.x-px)/(self.scale*(self.cfg.depth if side in ('front','back') else self.cfg.width)); self.art[side][1]-=(event.y-py)/(self.scale*self.cfg.height); self.drag=(side,event.x,event.y); self.redraw()
+
+    def svg_image(self, path, x,y,w,h, side):
+        if not path:return ""
+        try: data=base64.b64encode(Path(path).read_bytes()).decode(); ext=Path(path).suffix.lower().replace('.','') or 'png'; z,ox,oy=self.art[side]
+        except OSError:return ""
+        return f'<image href="data:image/{ext};base64,{data}" x="{x+ox*w-w*z/2+w/2}" y="{y+oy*h-h*z/2+h/2}" width="{w*z}" height="{h*z}" preserveAspectRatio="xMidYMid meet" opacity="0.98"/>'
 
     def export_svg(self):
-        path=filedialog.asksaveasfilename(defaultextension='.svg',filetypes=[('SVG','*.svg')])
-        if path:
-            Path(path).write_text(self._svg(), encoding='utf-8'); messagebox.showinfo('Exported', path)
-
-    def export_pdf(self, pagesize):
-        if pdf_canvas is None: messagebox.showerror('Dependency missing','Run pip install -r requirements.txt'); return
-        path=filedialog.asksaveasfilename(defaultextension='.pdf',filetypes=[('PDF','*.pdf')])
+        path=filedialog.asksaveasfilename(defaultextension=".svg",filetypes=[("SVG", "*.svg")])
         if not path:return
-        c=self.cfg; pdf=pdf_canvas(path,pagesize=pagesize); pw,ph=pagesize; margin=12*mm
-        scale=min((pw-2*margin)/(c.dieline_w+2*c.bleed)/mm,(ph-2*margin)/(c.dieline_h+2*c.bleed)/mm)
-        x0,y0=margin,ph-margin-(c.dieline_h+2*c.bleed)*mm*scale
-        def rr(x,y,w,h): pdf.rect(x0+(x+c.bleed)*mm*scale,y0+(y+c.bleed)*mm*scale,w*mm*scale,h*mm*scale,stroke=1,fill=0)
-        for x,y,w,h in self.geometry():rr(x,y,w,h)
-        for x,y,w,h in [(c.glue_tab,y-c.inner_h*.72,c.inner_d,c.inner_h*.72),(c.glue_tab+c.inner_d+c.inner_w,y-c.inner_h*.72,c.inner_d,c.inner_h*.72),(c.glue_tab+c.inner_d,y-c.inner_h*.52,c.inner_w,c.inner_h*.52),(c.glue_tab+c.inner_d*2+c.inner_w,y-c.inner_h*.52,c.inner_w,c.inner_h*.52),(c.glue_tab,y+c.inner_h,c.inner_d,c.tuck_depth),(c.glue_tab+c.inner_d+c.inner_w,y+c.inner_h,c.inner_d,c.inner_h*.52),(c.glue_tab+c.inner_d,y+c.inner_h,c.inner_w,c.inner_h*.34),(c.glue_tab+c.inner_d*2+c.inner_w,y+c.inner_h,c.inner_w,c.inner_h*.34)]:rr(x,y,w,h)
-        pdf.setDash(3,2); pdf.setStrokeColorRGB(.2,.4,.8)
-        for x in [c.glue_tab,c.glue_tab+c.inner_d,c.glue_tab+c.inner_d+c.inner_w,c.glue_tab+c.inner_d*2+c.inner_w,c.glue_tab+c.inner_d*2+c.inner_w*2]:pdf.line(x0+(x+c.bleed)*mm*scale,y0,x0+(x+c.bleed)*mm*scale,y0+(c.dieline_h+2*c.bleed)*mm*scale)
-        pdf.save(); messagebox.showinfo('Exported', path)
+        c=self.cfg; W,H=c.total_w+2*c.bleed,c.total_h+2*c.bleed; ox=oy=c.bleed; out=[f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}mm" height="{H}mm" viewBox="0 0 {W} {H}"><rect width="100%" height="100%" fill="white"/>']
+        def r(x,y,w,h,fold=False): out.append(f'<rect x="{x+ox}" y="{H-y-oy-h}" width="{w}" height="{h}" fill="none" stroke="{"#2865ad" if fold else "#111"}" stroke-width=".25" {"stroke-dasharray=\"2,1\"" if fold else ""}/>')
+        for x,y,w,h,_ in self.panels():r(x,y,w,h)
+        for x,y,w,h in self.flaps():r(x,y,w,h)
+        for x,y,w,h,side in self.panels():
+            if side in ("front","back"):
+                out.append(self.svg_image(self.front_path if side=="front" else self.back_path,x+ox,H-(y+oy+h),w,h,side))
+        for x in [c.glue,c.glue+c.depth,c.glue+c.depth+c.width,c.glue+c.depth*2+c.width]: out.append(f'<path d="M{x+ox} {H-oy}V{H-c.total_h-oy}" stroke="#2865ad" stroke-width=".2" stroke-dasharray="2,1"/>')
+        for y in [c.bottom,c.bottom+c.height]: out.append(f'<path d="M{ox} {H-y-oy}H{W-ox}" stroke="#2865ad" stroke-width=".2" stroke-dasharray="2,1"/>')
+        # trim marks
+        for x,y in [(0,0),(c.total_w,0),(0,c.total_h),(c.total_w,c.total_h)]: out.append(f'<circle cx="{x+ox}" cy="{H-y-oy}" r="1" fill="none" stroke="#c33" stroke-width=".2"/>')
+        out.append('</svg>'); Path(path).write_text('\n'.join(out),encoding="utf-8"); messagebox.showinfo("Exported",path)
 
-if __name__ == '__main__':
-    App().mainloop()
+    def export_pdf(self,pagesize,name):
+        if pdf_canvas is None: messagebox.showerror("Dependency missing","Run pip install -r requirements.txt"); return
+        path=filedialog.asksaveasfilename(defaultextension=".pdf",filetypes=[("PDF", "*.pdf")]);
+        if not path:return
+        c=self.cfg; pdf=pdf_canvas(path,pagesize=pagesize); pw,ph=pagesize; margin=12*mm; scale=min((pw-2*margin)/((c.total_w+2*c.bleed)*mm),(ph-2*margin)/((c.total_h+2*c.bleed)*mm)); x0=margin; y0=ph-margin-(c.total_h+2*c.bleed)*mm*scale
+        def rr(x,y,w,h): pdf.rect(x0+(x+c.bleed)*mm*scale,y0+(y+c.bleed)*mm*scale,w*mm*scale,h*mm*scale,stroke=1,fill=0)
+        for x,y,w,h,_ in self.panels():rr(x,y,w,h)
+        for x,y,w,h in self.flaps():rr(x,y,w,h)
+        pdf.setDash(3,2); pdf.setStrokeColorRGB(.16,.4,.68)
+        for x in [c.glue,c.glue+c.depth,c.glue+c.depth+c.width,c.glue+c.depth*2+c.width]:pdf.line(x0+(x+c.bleed)*mm*scale,y0,x0+(x+c.bleed)*mm*scale,y0+(c.total_h+2*c.bleed)*mm*scale)
+        for y in [c.bottom,c.bottom+c.height]:pdf.line(x0,y0+(y+c.bleed)*mm*scale,x0+(c.total_w+2*c.bleed)*mm*scale,y0+(y+c.bleed)*mm*scale)
+        pdf.save(); messagebox.showinfo("Exported",path)
+
+if __name__ == "__main__": App().mainloop()
