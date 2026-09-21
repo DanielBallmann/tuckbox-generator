@@ -1,4 +1,5 @@
-AI-Generated Tool for testing!
+# AI-Generated Tool for testing!
+Do not use, it will just generate garbage!
 
 # Tuckbox Generator
 
