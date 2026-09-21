@@ -2,20 +2,19 @@
 
 Tkinter desktop application for designing printable Magic: The Gathering tuckboxes.
 
-## Included
+## Features
 
-- Standard MTG card dimensions: 63 × 88 mm
-- Presets for 60, 75, 90, and 100 cards
+- Standard MTG dimensions: 63 × 88 mm
+- 60, 75, 90, and 100-card presets
 - Unsleeved, standard-sleeve, and thick-sleeve profiles
-- Automatic stack-width calculation from card count and thickness
-- Front/back artwork import with live drag-to-position preview
-- Configurable artwork scale and position state
-- Dieline with glue tab, front/back/side panels, tuck flap, dust flaps, cut and fold lines
-- Red trim/registration marks
+- Front/back artwork import with drag positioning
+- Dieline with glue tab, flaps, cut lines, fold lines, and trim marks
 - SVG export with embedded artwork
-- A4 and US Letter PDF dieline export
+- Single-box PDF export
+- Multiple-box-per-page PDF sheets for A4 and US Letter
+- Portable Windows executable build using PyInstaller
 
-## Install
+## Run from source
 
 ```bash
 python -m venv .venv
@@ -24,11 +23,23 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Print exports at **Actual size / 100%**. Always make a test cut first: card stock, sleeve brands, and printer tolerances vary. Imported artwork can be dragged over the front or back panel in the preview; use Reset artwork positions to return it to center.
+## Build a portable Windows executable
 
-## Geometry
+On Windows, open Command Prompt in the repository and run:
 
-The internal stack width is `cards × thickness + 2 × clearance`. The other internal dimensions are the 63 × 88 mm MTG card face plus clearance. Sleeve profiles provide practical starting values, but measure your own stack for production work.
+```bat
+build_windows.bat
+```
+
+The script installs the build dependency and creates:
+
+```text
+portable\\TuckboxGenerator.exe
+```
+
+You can also run the GitHub Actions workflow manually from **Actions → Build Windows portable executable**, or push a tag such as `v1.0.0`. The workflow publishes a downloadable ZIP artifact.
+
+Print exports at **Actual size / 100%** and make a test cut first because stock, sleeves, and printer tolerances vary.
 
 ## License
 
