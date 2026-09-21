@@ -1,45 +1,34 @@
 # Tuckbox Generator
 
-A standalone Python desktop application for generating printable tuckboxes sized for Magic: The Gathering cards.
+A standalone Tkinter desktop app that generates a physical tuckbox dieline for standard Magic: The Gathering cards.
 
-Features:
-- Tkinter desktop interface
-- MTG default card size presets (63 × 88 mm)
-- Adjustable card count, thickness, clearance, and bleed
-- Front/back artwork support
-- Print-ready SVG and PDF export
-- Live layout preview
+## Features
 
-## Requirements
+- MTG defaults: 63 × 88 mm cards
+- Automatic box width from card count and card thickness
+- Adjustable clearance, bleed, glue tab, and tuck flap
+- Real dieline layout: glue tab, back, side, front, side, top/bottom flaps, and dust flaps
+- Solid cut lines and blue dashed fold lines
+- SVG export in millimetres
+- A4 and US Letter PDF export at fitted scale
+- Live preview
 
-- Python 3.10+
-- pip
-
-## Installation
+## Install and run
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+# macOS/Linux
+source .venv/bin/activate
+# Windows PowerShell: .venv\\Scripts\\Activate.ps1
 pip install -r requirements.txt
-```
-
-## Run
-
-```bash
 python app.py
 ```
 
-## Default sizing
+Always print with **Actual size / 100% scale**. Make one test cut before producing a batch; card stock, sleeves, and printer tolerances vary.
 
-- Card width: 63 mm
-- Card height: 88 mm
-- Card thickness: 0.30 mm
-- Clearance: 2 mm
-- Bleed: 3 mm
+## Geometry
 
-## Output
-
-The app can export a simple print-ready SVG and PDF layout using the current artwork and dimensions.
+The internal width is calculated as `card count × card thickness + 2 × clearance`. The standard MTG card face is 63 × 88 mm. The generated dieline includes a configurable glue tab and independent top/bottom closure flaps.
 
 ## License
 
